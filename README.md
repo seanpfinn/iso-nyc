@@ -12,7 +12,10 @@ A photoreal, real-time Three.js scene of the Manhattan skyline seen from the Bro
 
 ## What's in the scene
 
-- Physically based sky (Preetham scattering) driving the sun color, ambient light, fog and reflections. Twilight, stars, moon, city glow and projected cloud layers blend on top.
+- Scene-linear HDR pipeline: half-float render targets, bloom fed by real highlight energy, metered auto exposure that adapts over about a second, and an AgX tone curve with light chromatic aberration, vignette and grain.
+- Atmosphere model: Rayleigh, Mie and ozone single scattering on a spherical earth plus a multiple-scattering fill, evaluated on the CPU into small lookup textures. It drives the sky, the sun color, ambient light and reflections, so noon is blue, golden hour glares, and dusk goes purple over orange. Stars, moon, city glow and cloud layers sit on top.
+- Directional aerial perspective: haze has height falloff and takes the color of the sky behind it, so the skyline dissolves into the horizon and glows toward the sun.
+- Analytic local lights (street lamps, platform fluorescents, tunnel lamps) computed in the material shaders instead of point lights; the underground is lit only by its own fixtures.
 - Planar-reflected river with wave distortion, sun glitter and rain rings.
 - Procedural facades (curtain wall, limestone, prewar masonry, brick lofts) with parallax-occluded window reveals, blinds and curtains, and per-building window lighting at night.
 - Landmarks: Empire State (orange for Halloween week), Chrysler crown, One World Trade Center, the Brooklyn Bridge with its cable web, and a DUMBO clock tower.
