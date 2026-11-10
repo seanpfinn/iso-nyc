@@ -213,7 +213,7 @@ const D2R = Math.PI / 180;
 const stage = $('#stage');
 const mobile = Math.min(innerWidth, innerHeight) < 700;
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
-const DPR = Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 1.75);
+const DPR0 = Math.min(window.devicePixelRatio || 1, 1.5); let DPR = DPR0, REFL_S = .5, SHADOW_EVERY = 2;
 renderer.setPixelRatio(DPR);
 const isWGL2 = renderer.capabilities.isWebGL2;
 // Scene-linear HDR all the way to the last pass: bloom sees real highlights and one film curve (AgX) is applied at the end.
@@ -234,7 +234,7 @@ let visH = 70, visW = 160, panX = 0, panRange = 0, lensShift = 0;
 
 const rtOpts = { format: THREE.RGBAFormat, type: HDR ? THREE.HalfFloatType : THREE.UnsignedByteType };
 const rt = isWGL2 ? new THREE.WebGLMultisampleRenderTarget(4, 4, rtOpts) : new THREE.WebGLRenderTarget(4, 4, rtOpts);
-if (isWGL2) rt.samples = 4;
+if (isWGL2) rt.samples = mobile ? 2 : 4;
 const composer = new THREE.EffectComposer(renderer, rt);
 composer.addPass(new THREE.RenderPass(scene, camera));
 const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(256, 256), .32, .5, 1.5);
@@ -533,12 +533,13 @@ function FM(style) {
   if (facadeCache[style]) return facadeCache[style];
   const st = STY[style], t = drawFacade(st);
   const m = new THREE.MeshStandardMaterial({ map: t.map, roughnessMap: t.rm, metalnessMap: t.rm, roughness: 1, metalness: 1, normalMap: t.nrm, normalScale: new THREE.Vector2(.7, .7), emissive: 0xffffff, emissiveMap: t.em, envMapIntensity: 1 });
+  m.userData.org = true;
   const warm = { value: st.warm }, ht = { value: t.ht }, depth = { value: st.kind === 'curtain' ? .028 : .05 };
   m.onBeforeCompile = sh => {
     globalPatch.call(m, sh);
     sh.uniforms.uNight = U.night; sh.uniforms.uLit = U.lit; sh.uniforms.uWarm = warm; sh.uniforms.uHeight = ht; sh.uniforms.uDepth = depth;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vSeed; varying float vWY;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSeed = floor(modelMatrix[3].xz * 0.37) * 0.0137 + vec2(modelMatrix[3].y * 0.011); vWY = (modelMatrix * vec4(transformed, 1.0)).y;');
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 aOrg; varying vec2 vSeed; varying float vWY;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvec3 org = aOrg + modelMatrix[3].xyz; vSeed = floor(org.xz * 0.37) * 0.0137 + vec2(org.y * 0.011); vWY = (modelMatrix * vec4(transformed, 1.0)).y;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
       varying vec2 vSeed; varying float vWY; uniform float uNight, uLit, uWarm, uDepth; uniform sampler2D uHeight; vec2 vUvP;
       float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }`)
@@ -1057,8 +1058,13 @@ function leafTex(hues) {
   return tex(c, true, false);
 }
 const LEAF_SETS = [[[42, 88, 44], [36, 84, 40], [48, 76, 48]], [[26, 86, 42], [18, 80, 36], [34, 84, 44]], [[70, 55, 34], [52, 68, 38], [84, 40, 30]], [[10, 72, 34], [20, 78, 38], [4, 64, 28]], [[38, 74, 38], [60, 62, 36], [28, 76, 36]], [[92, 42, 30], [75, 50, 34], [60, 60, 38]]];
+const SWAY = { value: new THREE.Vector2() };
 const LEAF_MATS = LEAF_SETS.map(hs => { const t = leafTex(hs); const m = new THREE.MeshStandardMaterial({ map: t, alphaTest: .5, side: THREE.DoubleSide, roughness: .85, vertexColors: true, envMapIntensity: .7 }); m.userData.base = new THREE.Color(1, 1, 1); m.userData.depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: t, alphaTest: .5 });
+  m.userData.org = true;
   m.onBeforeCompile = sh => { globalPatch.call(m, sh);   // sunlight passing through the leaves when the sun is behind them
+    sh.uniforms.uSway = SWAY;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 aOrg; uniform vec2 uSway;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n{ float th = sin(uSway.x + fract(aOrg.x * 0.37 + aOrg.z * 0.11) * 6.2832) * uSway.y; vec2 d = transformed.xy - aOrg.xy; transformed.x -= d.y * th; transformed.y += d.x * th; }');
     sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>
       #if NUM_DIR_LIGHTS > 0
         { float tl = pow( saturate( dot( geometry.viewDir, -directionalLights[ 0 ].direction ) ), 2.0 ); reflectedLight.directDiffuse += material.diffuseColor * directionalLights[ 0 ].color * tl * 0.22; }
@@ -1364,7 +1370,7 @@ function precip(kind, n, z0, z1, size) {
       #include <encodings_fragment>
       }`,
   });
-  const obj = kind === 'rain' ? new THREE.LineSegments(g, mat) : new THREE.Points(g, mat); obj.frustumCulled = false; scene.add(obj); return mat;
+  const obj = kind === 'rain' ? new THREE.LineSegments(g, mat) : new THREE.Points(g, mat); obj.frustumCulled = false; obj.userData.noReflect = true; scene.add(obj); return mat;
 }
 const RAINS = [precip('rain', 14000, -1200, 140, 0)];
 const SNOWS = [precip('snow', 26000, -1500, -20, .55), precip('snow', 9000, -20, 135, .16), precip('snow', 1500, 60, 140, .3)];
@@ -1388,7 +1394,7 @@ function setSnow(d) {
 // lightning bolt
 const boltGeo = new THREE.BufferGeometry(); boltGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(30 * 3), 3));
 const BOLT_MAT = new THREE.LineBasicMaterial({ color: new THREE.Color(8, 8, 10), transparent: true, opacity: 0, fog: false });
-const bolt = new THREE.Line(boltGeo, BOLT_MAT); bolt.frustumCulled = false; scene.add(bolt);
+const bolt = new THREE.Line(boltGeo, BOLT_MAT); bolt.userData.keepReflect = true; bolt.frustumCulled = false; scene.add(bolt);
 const storm = { timer: 3, age: 99 };
 
 /* ---------- lights ---------- */
@@ -1433,7 +1439,7 @@ function layout() {
   camera.projectionMatrix.elements[9] = lensShift; camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
   panRange = Math.max(0, (SCENE_W - 6 - visW) / 2); panX = clamp(panX, -panRange, panRange);
   stage.classList.toggle('pannable', panRange > 0); $('#hint').hidden = !(panRange > 0 && !interacted);
-  const rw = Math.round(w * DPR * .5), rh = Math.round(h * DPR * .5); water.getRenderTarget().setSize(rw, rh);
+  const rw = Math.round(w * DPR * REFL_S), rh = Math.round(h * DPR * REFL_S); water.getRenderTarget().setSize(rw, rh);
   [...RAINS, ...SNOWS].forEach(m => m.uniforms.uViewH.value = h * DPR);
 }
 addEventListener('resize', layout);
@@ -1496,7 +1502,7 @@ function step(dt, now) {
   const night = clamp((1 - sunEl) / 8, 0, 1), day = 1 - night, nightW = clamp((-2 - sunEl) / 8, 0, 1);
   const dayL = .05 + 1.3 * clamp((sunEl + 6) / 20, 0, 1);
   ATM.haze = W.hz * (1 + .35 * clamp((12 - sunEl) / 12, 0, 1) * day);          // a low sun shines through more haze
-  if (Math.abs(sunEl - lutKey[0]) > .02 || Math.abs(ATM.haze - lutKey[1]) > .01) { ATM.fill(sunDir); lutKey[0] = sunEl; lutKey[1] = ATM.haze; if (!playing) envDirty = true; }
+  if (Math.abs(sunEl - lutKey[0]) > .1 || Math.abs(ATM.haze - lutKey[1]) > .01) { ATM.fill(sunDir); lutKey[0] = sunEl; lutKey[1] = ATM.haze; if (!playing) envDirty = true; }
   ATM.sunT(sunDir.y, SUNT);
   SUNC.setRGB(Math.pow(SUNT.r, .8), Math.pow(SUNT.g, .8), Math.pow(SUNT.b, .8));
   const sunLum = Math.max(SUNC.r, SUNC.g, SUNC.b, 1e-4), sunIll = SUN_I * sunLum * Math.pow(1 - dk, 2.2);
@@ -1575,7 +1581,7 @@ function step(dt, now) {
   BUS_WIN.emissiveIntensity = nL; BOAT_WIN.emissiveIntensity = nL; STORE_M.emissiveIntensity = nL * 1.2; window.__ad.color.setRGB(.9, .85, .8).multiplyScalar(.6 + nL * 3);
   BEACON.opacity = (.3 + .7 * night) * (Math.sin(T * 3.0) > .3 ? 1 : .05);
   const wind = 1 + W.storm * 3 + W.rain;
-  trees.forEach(t => { t.userData.can.rotation.z = Math.sin(T * (0.8 + W.storm) + t.userData.ph) * .015 * wind; });
+  SWAY.value.set(T * (0.8 + W.storm), .015 * wind);
 
   // people
   const hurry = 1 + clamp(W.rain, 0, 1) * .3;
@@ -1656,15 +1662,120 @@ function step(dt, now) {
   camera.lookAt(panX + pmx * 1.6, EYE - pmy * .5, -1000);
   camera.projectionMatrix.elements[9] = lensShift;
   skyDome.position.copy(camera.position);
-  if (frameNo % 2 === 0 || dt === 0) renderer.shadowMap.needsUpdate = true;
+  if (frameNo % SHADOW_EVERY === 0 || dt === 0) renderer.shadowMap.needsUpdate = true;
   updateUI(now);
+}
+/* ---------- performance: static batching, reflection culling, quality governor ---------- */
+// Everything that never moves is baked to world space and merged per material, so a frame is a few hundred draw calls instead of thousands.
+[water, skyDome, bolt, TRAIN, plane, heli, ...boats.map(b => b.m), ...lanes.flatMap(L => L.cars)].forEach(o => o.userData.dyn = true);
+const overLand = b => b.min.z > -13 || (b.min.x > -20 && b.min.z > -2600);   // nothing here can show up in the river
+function mergeStatic() {
+  scene.updateMatrixWorld(true);
+  const buckets = new Map(), done = [], box = new THREE.Box3(), v = new THREE.Vector3(), nm = new THREE.Matrix3(), org = new THREE.Vector3();
+  const okMat = m => !m.transparent || (m.blending === THREE.AdditiveBlending && !m.depthWrite);
+  (function walk(o) {
+    if (o.userData.dyn || !o.visible) return;
+    if (o.type === 'Mesh' && !o.isInstancedMesh && o.geometry.attributes.position && !o.geometry.morphAttributes.position) {
+      const g = o.geometry, mats = Array.isArray(o.material) ? o.material : [o.material];
+      if (mats.every(okMat)) {
+        if (!g.boundingBox) g.computeBoundingBox();
+        box.copy(g.boundingBox).applyMatrix4(o.matrixWorld);
+        const far = box.max.z < -1500, nr = overLand(box), total = g.index ? g.index.count : g.attributes.position.count;
+        const names = Object.keys(g.attributes).sort(), sig = names.map(n => n + g.attributes[n].itemSize + g.attributes[n].array.constructor.name + (g.attributes[n].normalized ? 'n' : '')).join(',');
+        const ranges = Array.isArray(o.material) ? g.groups.map(q => [mats[q.materialIndex], q.start, Math.min(q.count, total - q.start)]) : [[o.material, 0, total]];
+        for (const [m, start, count] of ranges) {
+          if (!m || count <= 0) continue;
+          const cast = o.castShadow && !far, key = [m.uuid, nr, far, cast, o.receiveShadow, o.customDepthMaterial ? o.customDepthMaterial.uuid : '', o.renderOrder, sig].join('|');
+          let b = buckets.get(key); if (!b) buckets.set(key, b = { m, nr, cast, recv: o.receiveShadow, dm: o.customDepthMaterial, ro: o.renderOrder, names, parts: [] });
+          b.parts.push({ o, g, start, count });
+        }
+        done.push(o);
+      }
+    }
+    o.children.slice().forEach(walk);
+  })(scene);
+  let merged = 0;
+  for (const b of buckets.values()) {
+    const first = b.parts[0].g, out = {}, idx = []; let nv = 0;
+    b.names.forEach(n => out[n] = []); const orgA = b.m.userData.org ? [] : null;
+    for (const { o, g, start, count } of b.parts) {
+      const mw = o.matrixWorld, flip = mw.determinant() < 0, gi = g.index ? g.index.array : null, map = new Map(); nm.getNormalMatrix(mw); org.setFromMatrixPosition(mw);
+      const at = b.names.map(n => g.attributes[n]);
+      for (let i = 0; i < count; i++) {
+        let j = i; if (flip) { const r3 = i % 3; j = r3 === 1 ? i + 1 : r3 === 2 ? i - 1 : i; }
+        const src = gi ? gi[start + j] : start + j; let dst = map.get(src);
+        if (dst === undefined) {
+          dst = nv++; map.set(src, dst);
+          b.names.forEach((n, k) => { const a = at[k], arr = out[n];
+            if (n === 'position') { v.fromBufferAttribute(a, src).applyMatrix4(mw); arr.push(v.x, v.y, v.z); }
+            else if (n === 'normal') { v.fromBufferAttribute(a, src).applyMatrix3(nm).normalize(); arr.push(v.x, v.y, v.z); }
+            else { const sz = a.itemSize, ar = a.array; for (let c = 0; c < sz; c++) arr.push(ar[src * sz + c]); } });
+          if (orgA) orgA.push(org.x, org.y, org.z);
+        }
+        idx.push(dst);
+      }
+    }
+    const G = new THREE.BufferGeometry();
+    b.names.forEach(n => { const a = first.attributes[n]; G.setAttribute(n, new THREE.BufferAttribute(new a.array.constructor(out[n]), a.itemSize, a.normalized)); });
+    if (orgA) G.setAttribute('aOrg', new THREE.BufferAttribute(new Float32Array(orgA), 3));
+    G.setIndex(new THREE.BufferAttribute(nv > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), 1));
+    const M = new THREE.Mesh(G, b.m); M.castShadow = b.cast; M.receiveShadow = b.recv; M.renderOrder = b.ro; if (b.dm) M.customDepthMaterial = b.dm;
+    M.matrixAutoUpdate = false; M.userData.dyn = true; if (b.nr) M.userData.noReflect = true; scene.add(M); merged++;
+  }
+  const gone = new Set();
+  done.forEach(o => { o.children.slice().forEach(c => o.parent.attach(c)); o.parent.remove(o); gone.add(o.geometry); });
+  scene.traverse(o => { if (o.geometry) gone.delete(o.geometry); }); gone.forEach(g => g.dispose());
+  return [done.length, merged];
+}
+// The river can only mirror what stands beyond it: the street, the station and the Brooklyn blocks are skipped in the reflection pass.
+const noRefl = [];
+function cullReflection() {
+  scene.updateMatrixWorld(true);
+  const bb = new THREE.Box3(), tb = new THREE.Box3(), m4 = new THREE.Matrix4(), p = new THREE.Vector3();
+  const boxOf = o => { bb.makeEmpty(); o.traverse(c => {
+    if (c.isInstancedMesh) { for (let i = 0; i < c.count; i++) { c.getMatrixAt(i, m4); bb.expandByPoint(p.setFromMatrixPosition(m4).applyMatrix4(c.matrixWorld)); } }
+    else if (c.isSprite) bb.expandByPoint(p.setFromMatrixPosition(c.matrixWorld))
+    else if (c.geometry && c.geometry.attributes.position) { if (!c.geometry.boundingBox) c.geometry.computeBoundingBox(); bb.union(tb.copy(c.geometry.boundingBox).applyMatrix4(c.matrixWorld)); } }); return bb; };
+  (function visit(o) {
+    if (o.isLight || o === water || o === skyDome || o.userData.keepReflect) return;
+    if (o.userData.noReflect) { noRefl.push(o); return; }
+    let light = false; o.traverse(c => { if (c.isLight) light = true; });
+    if (!light && o !== scene) { const b = boxOf(o); if (b.isEmpty()) return; if (overLand(b)) { noRefl.push(o); return; } }
+    o.children.forEach(visit);
+  })(scene);
+  const base = water.onBeforeRender;
+  water.onBeforeRender = function () {
+    for (let i = 0; i < noRefl.length; i++) { const o = noRefl[i]; o.userData.v = o.visible; o.visible = false; }
+    base.apply(this, arguments);
+    for (let i = 0; i < noRefl.length; i++) noRefl[i].visible = noRefl[i].userData.v;
+  };
+}
+// If the device cannot hold about 45 fps, step quality down once and stay there: resolution first, then reflection and shadow cost.
+const gov = { on: true, tier: 0, acc: 0, n: 0, t0: 0 };
+function setTier(t) {
+  gov.tier = t;
+  DPR = DPR0 * (t >= 3 ? .62 : t >= 1 ? .8 : 1); REFL_S = t >= 2 ? .33 : .5; SHADOW_EVERY = t >= 2 ? 4 : 2;
+  if (t >= 3 && sun.shadow.mapSize.x > 2048) { sun.shadow.mapSize.set(2048, 2048); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+  renderer.setPixelRatio(DPR); composer.setPixelRatio(DPR); layout(); renderer.shadowMap.needsUpdate = true;
 }
 let last = performance.now() / 1000;
 function frame(nowMs) {
-  const now = nowMs / 1000, dt = Math.min(.05, Math.max(0, now - last)); last = now;
+  const now = nowMs / 1000, raw = now - last, dt = Math.min(.05, Math.max(0, raw)); last = now;
+  if (gov.on && gov.tier < 3 && raw < .25) {
+    if (!gov.t0) gov.t0 = now;
+    if (now - gov.t0 > 3) { gov.acc += raw; if (++gov.n >= 90) { if (gov.acc / gov.n > 1 / 42) setTier(gov.tier + 1); gov.acc = gov.n = 0; } }
+  }
   step(dt, nowMs); composer.render(); requestAnimationFrame(frame);
 }
-layout(); step(.016, 0); renderer.shadowMap.needsUpdate = true; updateEnv(); requestAnimationFrame(frame);
+const MERGED = mergeStatic();
+layout(); step(.016, 0); cullReflection(); renderer.shadowMap.needsUpdate = true; updateEnv(); requestAnimationFrame(frame);
+window.__gov = v => { gov.on = v; }; window.__tier = setTier;
+window.__perf = () => { const r = renderer, I = r.info, o = { merged: MERGED, noRefl: noRefl.length, tier: gov.tier, dpr: +DPR.toFixed(2) }; I.autoReset = false;
+  const run = (sh, wa) => { I.reset(); r.shadowMap.needsUpdate = sh; water.visible = wa; composer.render(); return [I.render.calls, I.render.triangles]; };
+  const a = run(false, false), b = run(false, true), c = run(true, true); water.visible = true; I.autoReset = true;
+  o.main = a; o.reflection = [b[0] - a[0], b[1] - a[1]]; o.shadow = [c[0] - b[0], c[1] - b[1]]; o.total = c; o.geometries = I.memory.geometries; o.textures = I.memory.textures; o.programs = I.programs.length;
+  let n = 0; scene.traverse(x => { if (x.isMesh || x.isPoints || x.isLine || x.isSprite) n++; }); o.objects = n;
+  let t = performance.now(); for (let i = 0; i < 200; i++) step(0, 0); o.stepMs = +((performance.now() - t) / 200).toFixed(3); return o; };
 window.__setTime = h => { H = h; envDirty = true; }; window.__setWx = k => { wxKey = k; Object.assign(W, WX[k]); envDirty = true; };
 window.__pause = () => { playing = false; syncPlay(); };
 window.__snowNow = v => { snowDepth = v; };

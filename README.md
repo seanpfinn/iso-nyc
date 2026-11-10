@@ -45,5 +45,6 @@ Dependencies (three r128 plus its EffectComposer, UnrealBloomPass and Reflector 
 
 ## Notes
 
-- Heavy scene: bloom, planar reflection, soft shadows and parallax mapping. Older phones will run it slowly; the control panel collapses with the arrow button so the subway is visible on narrow screens.
+- Performance: everything static is baked to world space and merged per material at load (about 1,570 meshes into 162), the river reflection skips whatever cannot appear in it, and a frame is roughly 600 draw calls instead of 7,000. If a device cannot hold about 45 fps, a governor steps quality down once (resolution, then reflection and shadow cost). `window.__perf()` in the console reports draw calls and triangles per pass.
+- Still a heavy scene for fill rate: HDR bloom, planar reflection, soft shadows and parallax mapping. The control panel collapses with the arrow button so the subway is visible on narrow screens.
 - Built with Three.js r128. Nothing to compile.
