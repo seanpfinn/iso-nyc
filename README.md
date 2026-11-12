@@ -1,5 +1,7 @@
 # iso-nyc — East River Diorama
 
+> **This project is now [Metrarium](https://github.com/seanpfinn/metrarium).** Development continues there; this repo is kept as an archive.
+
 A photoreal, real-time Three.js scene of the Manhattan skyline seen from the Brooklyn waterfront, with the Brooklyn Bridge, a promenade, DUMBO lofts, and a cut-away subway station underneath. Everything is modeled in meters and shot with a telephoto, shifted-lens camera 300 m back, so scale and haze behave like a photograph.
 
 ![Golden hour](renders/golden-hour.png)
